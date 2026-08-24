@@ -1,0 +1,9 @@
+services:
+  fastbot:
+    build: .
+    ports: ["5012:5012"]
+    env_file: [.env]
+    volumes: ["fastbot-data:/app/.data"]
+    restart: unless-stopped
+volumes:
+  fastbot-data:
