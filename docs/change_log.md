@@ -2,6 +2,8 @@
 
 ## 0.2.0 — 2026-08-25
 
+- Added an optimized animated platform walkthrough to the README covering the principal product,
+  agent, governance, and administration workflows.
 - Completed the Python FastHTML/OpenBot parity milestones around governed computers, live screens,
   browser/file/shell tools, interactive human takeover, and separate Docker supervision.
 - Added remote AG-UI coworkers, MCP discovery and per-coworker grants, editable skills, encrypted

@@ -8,6 +8,14 @@ The application follows the FastHTML pattern used by the sister repositories. La
 primary agent runtime, xAI Grok is the default model, and AG-UI is the protocol boundary. Text,
 tools, state, errors, and generative UI stream from the server as SSE events—there is no React build.
 
+## Platform demo
+
+![FastBot platform demo](screenshots/fastbot-platform-demo.gif)
+
+The walkthrough covers coworker channels, AG-UI streaming, LangGraph tool activity, generative UI,
+governed browser execution, live computers, interactive human takeover, skills, policy boundaries,
+MCP plugins, published components, and people/RBAC administration.
+
 ## Run locally
 
 ```bash
