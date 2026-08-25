@@ -1,0 +1,8 @@
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
+WORKDIR /service
+COPY pyproject.toml README.md ./
+COPY fastbot ./fastbot
+RUN pip install --no-cache-dir .
+ENV FASTBOT_COMPUTER_BACKEND=local FASTBOT_WORKSPACE_ROOT=/workspace
+EXPOSE 4100
+CMD ["uvicorn", "fastbot.computer_service:app", "--host", "0.0.0.0", "--port", "4100"]

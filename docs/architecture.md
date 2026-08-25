@@ -1,7 +1,8 @@
 # FastBot architecture
 
-FastBot is a server-rendered Python port of OpenBot's governed coworker model. The first milestone
-uses one FastHTML process and SQLite while keeping protocol and computer boundaries explicit.
+FastBot is a server-rendered Python port of OpenBot's governed coworker model. FastHTML owns the
+product and protocol routes; a separate supervisor owns the Docker socket; every coworker computer
+has its own Chromium profile and named workspace volume.
 
 ```mermaid
 flowchart LR
@@ -29,14 +30,39 @@ component and supplies JSON props.
 - Keys come from process environment and are never stored or sent to the browser.
 - The development launcher can inherit a key from a sibling repo's ignored `.env` without printing
   or copying it.
-- Coworkers have distinct workspace paths and a Docker runtime abstraction.
+- The application never holds the Docker socket. A token-protected supervisor creates capped,
+  capability-dropped computer containers on a private control network plus an egress network.
+- Coworkers have distinct named workspace volumes and persistent Chromium profiles. Browser,
+  file, and shell calls reach the container only after the application gateway records an allow.
+- Browser targets are DNS-resolved and private, loopback, link-local, and cloud-metadata addresses
+  are refused independently of configurable policy.
+- Human takeover is server-owned state. While a person controls a computer, agent browser and
+  shell actions are refused; the person can click the live screen, type, and press keys;
+  help/take/release and human-action transitions are audited.
 - Runs, tool lifecycles, and policy decisions are audited.
 
-## Parity roadmap
+## Product capabilities
 
-1. Current: coworkers, channels, LangGraph/xAI, AG-UI SSE, generative UI, durable history, policy,
-   audit, skills/computer scaffolding, and single-user administration.
-2. Next: Docker Chromium service, screenshot streaming, governed browser/files/shell tools,
-   interrupts, and human takeover.
-3. Then: encrypted credentials, MCP grants, remote AG-UI coworkers, editable skills, component
-   publishing, identities, and RBAC.
+- Local LangGraph coworkers and remote AG-UI coworkers use the same durable channel surface.
+- AG-UI streams text, tools, state snapshots, errors, safe generative components, and human-help
+  interrupts over server-side SSE.
+- Skills are editable reusable instructions granted per coworker. They never grant a tool.
+- MCP servers can be registered, introspected with `tools/list`, classified, and granted per
+  coworker. Unclassified tools default to write risk.
+- Credentials are write-only and Fernet-encrypted at rest. Agent and connector authorization
+  references credential ids; secret values are never listed.
+- Published components select one of the audited browser renderers (`checklist`, `notice`,
+  `metric`, `table`). Components may be withheld per coworker; model-provided executable HTML is
+  never evaluated.
+- Single-user administration is the local default. Disabling it enables password sessions,
+  administrator/member RBAC, user provisioning, and runtime role changes.
+
+## Computer deployment flow
+
+1. The application asks the supervisor to start a validated coworker slug.
+2. The supervisor creates `fastbot-workspace-<slug>`, launches a resource-capped computer container,
+   and returns only its private control-network address.
+3. The application calls the computer with a separate bearer token. The computer exposes browser
+   navigation/snapshot/screenshot and workspace read/write/shell operations.
+4. The browser receives a multipart live screenshot stream. All capability calls continue through
+   the application policy gateway; the computer service is not published to the host.

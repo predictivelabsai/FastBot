@@ -29,4 +29,27 @@ The launcher uses `XAI_API_KEY` from the environment or inherits it from an igno
 ```
 
 The canonical endpoint is `POST /api/agui`; FastHTML chat uses the same runtime through
-`POST /api/chat`. See [architecture](docs/architecture.md) for the contract and roadmap.
+`POST /api/chat`.
+
+## Included platform surfaces
+
+- Local LangGraph/xAI and remote AG-UI coworkers with durable channels
+- Canonical AG-UI server-side SSE, tool activity, state, interrupts, and generative UI
+- Governed Playwright browser, workspace files, shell, live screens, and human takeover
+- Separate Docker supervisor plus one resource-capped computer and volume per coworker
+- Editable personal/deployment skills and per-coworker grants
+- MCP server discovery, tool classification, and per-coworker grants
+- Write-only encrypted credentials
+- Published/withheld safe generative components
+- People, administrator/member RBAC, policies, and complete audit history
+
+For container deployment, set non-default `FASTBOT_SESSION_SECRET` and
+`FASTBOT_SUPERVISOR_TOKEN`, then build both images and start the stack:
+
+```bash
+docker compose --profile build-only build
+docker compose up -d fastbot supervisor
+```
+
+See [architecture](docs/architecture.md) for the complete protocol, security, and computer-runtime
+design.

@@ -14,7 +14,7 @@ from langgraph.prebuilt import create_react_agent
 from . import db
 from .agui import EventType, event, generative_ui
 from .config import settings
-from .tools import TOOLS
+from .tools import tools_for
 
 
 @lru_cache
@@ -26,9 +26,9 @@ def model() -> ChatOpenAI:
                       streaming=True, temperature=0.2, timeout=90)
 
 
-@lru_cache
-def graph(prompt: str):
-    return create_react_agent(model(), tools=TOOLS, prompt=prompt, checkpointer=MemorySaver())
+def graph(prompt: str, agent: dict, channel_id: int):
+    return create_react_agent(model(), tools=tools_for(agent, channel_id), prompt=prompt,
+                              checkpointer=MemorySaver())
 
 
 def history(channel_id: int) -> list[Any]:
@@ -37,6 +37,19 @@ def history(channel_id: int) -> list[Any]:
         cls = HumanMessage if item["role"] == "user" else AIMessage
         result.append(cls(content=item["content"]))
     return result
+
+
+def audit_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: ({"redacted": True, "length": len(str(item))} if key.lower() in {"text","content","password","secret","authorization","api_key"} else audit_safe(item)) for key,item in value.items()}
+    if isinstance(value, list): return [audit_safe(item) for item in value[:20]]
+    text=str(value)
+    return text[:500] + ("…" if len(text)>500 else "")
+
+
+def audit_result(value: Any) -> Any:
+    if isinstance(value,str): return {"type":"text","length":len(value)}
+    return audit_safe(value)
 
 
 async def stream_turn(*, channel_id: int, agent: dict[str, Any], message: str,
@@ -60,7 +73,9 @@ async def stream_turn(*, channel_id: int, agent: dict[str, Any], message: str,
         else:
             inputs = {"messages": history(channel_id) + [HumanMessage(content=message)]}
             config = {"configurable": {"thread_id": thread_id}}
-            async for item in graph(agent["system_prompt"]).astream_events(inputs, config=config, version="v2"):
+            skills = db.rows("SELECT s.instructions FROM skills s JOIN agent_skill_grants g ON g.skill_id=s.id WHERE g.agent_id=? AND s.enabled=1", (agent["id"],))
+            prompt = agent["system_prompt"] + "".join(f"\n\nSkill instructions:\n{s['instructions']}" for s in skills)
+            async for item in graph(prompt, agent, channel_id).astream_events(inputs, config=config, version="v2"):
                 kind = item.get("event")
                 data = item.get("data", {})
                 if kind == "on_chat_model_stream":
@@ -75,7 +90,7 @@ async def stream_turn(*, channel_id: int, agent: dict[str, Any], message: str,
                     tool_names[call_id] = name
                     yield event(EventType.TOOL_CALL_START, toolCallId=call_id, toolCallName=name, parentMessageId=message_id)
                     yield event(EventType.TOOL_CALL_ARGS, toolCallId=call_id, delta=json.dumps(data.get("input", {}), default=str))
-                    db.audit("tool.started", channel_id=channel_id, agent_id=agent["id"], action=name, detail=data.get("input", {}))
+                    db.audit("tool.started", channel_id=channel_id, agent_id=agent["id"], action=name, detail=audit_safe(data.get("input", {})))
                 elif kind == "on_tool_end":
                     call_id = item.get("run_id", "")
                     output = data.get("output")
@@ -83,14 +98,18 @@ async def stream_turn(*, channel_id: int, agent: dict[str, Any], message: str,
                     yield event(EventType.TOOL_CALL_END, toolCallId=call_id)
                     yield event(EventType.TOOL_CALL_RESULT, messageId=uuid.uuid4().hex, toolCallId=call_id,
                                 content=json.dumps(content, default=str))
-                    db.audit("tool.finished", channel_id=channel_id, agent_id=agent["id"], action=tool_names.get(call_id), detail={"result": content})
+                    db.audit("tool.finished", channel_id=channel_id, agent_id=agent["id"], action=tool_names.get(call_id), detail={"result": audit_result(content)})
+                    if tool_names.get(call_id) == "ask_human":
+                        yield event(EventType.CUSTOM, name="human_interrupt", value={"agentId": agent["id"], "message": str(content)})
+                        yield event(EventType.STATE_SNAPSHOT, snapshot={"channelId": channel_id, "agent": agent["slug"], "status": "interrupted", "control": "waiting"})
                     if isinstance(content, str):
                         try:
                             parsed = json.loads(content)
                         except json.JSONDecodeError:
                             parsed = None
-                        if isinstance(parsed, dict) and parsed.get("kind") == "checklist":
-                            yield generative_ui("checklist.created", "checklist", parsed)
+                        if isinstance(parsed, dict) and parsed.get("kind"):
+                            component = db.one("SELECT id,template FROM components WHERE name=? AND published=1 AND id NOT IN (SELECT component_id FROM component_withholds WHERE agent_id=?)", (parsed["kind"], agent["id"]))
+                            if component: yield generative_ui(f"{parsed['kind']}.created", component["template"], parsed)
         final = "".join(accumulated) or "Done."
         db.execute("INSERT INTO messages(channel_id,role,content,created_at) VALUES(?,?,?,?)", (channel_id, "assistant", final, db.now()))
         yield event(EventType.TEXT_MESSAGE_END, messageId=message_id)

@@ -19,10 +19,13 @@
     activity.prepend(el);
   }
   function renderUI(value) {
-    if (!value || value.component !== 'checklist') return;
+    if (!value) return;
     const card = document.createElement('div'); card.className = 'ui-card';
     const title = document.createElement('h4'); title.textContent = value.props.title || 'Checklist'; card.appendChild(title);
-    (value.props.items || []).forEach(item => { const label = document.createElement('label'); const cb = document.createElement('input'); cb.type='checkbox'; label.append(cb, ` ${item}`); card.appendChild(label); });
+    if (value.component === 'checklist') (value.props.items || []).forEach(item => { const label = document.createElement('label'); const cb = document.createElement('input'); cb.type='checkbox'; label.append(cb, ` ${item}`); card.appendChild(label); });
+    else if (value.component === 'metric') { const metric=document.createElement('div'); metric.className='metric-value'; metric.textContent=value.props.value ?? '—'; card.appendChild(metric); }
+    else if (value.component === 'table') { const table=document.createElement('table'); const rows=value.props.rows||[]; const headers=value.props.headers||[]; const head=document.createElement('tr'); headers.forEach(x=>{const th=document.createElement('th');th.textContent=x;head.appendChild(th)}); table.appendChild(head); rows.forEach(row=>{const tr=document.createElement('tr');row.forEach(x=>{const td=document.createElement('td');td.textContent=x;tr.appendChild(td)});table.appendChild(tr)}); card.appendChild(table); }
+    else { const body=document.createElement('p'); body.textContent=value.props.message || value.props.text || ''; card.appendChild(body); }
     messages.appendChild(card); messages.scrollTop = messages.scrollHeight;
   }
   async function send(event) {
@@ -43,6 +46,7 @@
           else if(ev.type==='TOOL_CALL_START') log(`Tool · ${ev.toolCallName}`, 'Waiting for governed result');
           else if(ev.type==='TOOL_CALL_RESULT') log('Tool completed', ev.content?.slice(0,80));
           else if(ev.type==='STATE_SNAPSHOT') log(`State · ${ev.snapshot?.status || 'updated'}`);
+          else if(ev.type==='CUSTOM' && ev.name==='human_interrupt') { log('Human help requested', ev.value?.message || 'Take control in Computers'); }
           else if(ev.type==='CUSTOM') renderUI(ev.value);
           else if(ev.type==='RUN_ERROR') { bubble.textContent += `\n${ev.message}`; log('Run failed',ev.message); }
           else if(ev.type==='RUN_FINISHED') log('Run finished');

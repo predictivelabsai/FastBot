@@ -15,11 +15,12 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS agents (
  id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, title TEXT NOT NULL,
  description TEXT NOT NULL, system_prompt TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '✦',
- visibility TEXT NOT NULL DEFAULT 'private', endpoint TEXT, created_at TEXT NOT NULL
+ visibility TEXT NOT NULL DEFAULT 'private', endpoint TEXT, auth_credential_id INTEGER,
+ owner_id INTEGER, deleted_at TEXT, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS channels (
  id INTEGER PRIMARY KEY, agent_id INTEGER NOT NULL REFERENCES agents(id), title TEXT NOT NULL,
- created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+ owner_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
  id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL REFERENCES channels(id), role TEXT NOT NULL,
@@ -35,7 +36,53 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE TABLE IF NOT EXISTS skills (
  id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL,
- instructions TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+ instructions TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, owner_id INTEGER,
+ scope TEXT NOT NULL DEFAULT 'personal', created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+ id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+ role TEXT NOT NULL DEFAULT 'member', active INTEGER NOT NULL DEFAULT 1,
+ password_hash TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS credentials (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+ ciphertext BLOB NOT NULL, created_by INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_skill_grants (
+ agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+ skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+ PRIMARY KEY(agent_id,skill_id)
+);
+CREATE TABLE IF NOT EXISTS components (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+ schema_json TEXT NOT NULL DEFAULT '{}', template TEXT NOT NULL DEFAULT '',
+ published INTEGER NOT NULL DEFAULT 0, created_by INTEGER, created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS component_withholds (
+ component_id INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+ agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+ PRIMARY KEY(component_id,agent_id)
+);
+CREATE TABLE IF NOT EXISTS plugins (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, transport TEXT NOT NULL,
+ endpoint TEXT NOT NULL, auth_credential_id INTEGER, enabled INTEGER NOT NULL DEFAULT 1,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plugin_tools (
+ id INTEGER PRIMARY KEY, plugin_id INTEGER NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', input_schema TEXT NOT NULL DEFAULT '{}',
+ risk TEXT NOT NULL DEFAULT 'write', UNIQUE(plugin_id,name)
+);
+CREATE TABLE IF NOT EXISTS agent_tool_grants (
+ agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+ tool_id INTEGER NOT NULL REFERENCES plugin_tools(id) ON DELETE CASCADE,
+ PRIMARY KEY(agent_id,tool_id)
+);
+CREATE TABLE IF NOT EXISTS computer_states (
+ agent_id INTEGER PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+ status TEXT NOT NULL DEFAULT 'stopped', control TEXT NOT NULL DEFAULT 'agent',
+ help_reason TEXT, current_url TEXT, screenshot_path TEXT, updated_at TEXT NOT NULL
 );
 """
 
@@ -75,10 +122,45 @@ def init_db() -> None:
             db.executemany("INSERT INTO policies(action,effect,pattern,note,created_at) VALUES(?,?,?,?,?)", [
                 ("browser.navigate", "allow", "https://*", "Allow public HTTPS navigation", created),
                 ("browser.navigate", "deny", "http://127.0.0.1*", "Protect loopback services", created),
+                ("browser.click", "allow", "*", "Allow page interaction in the isolated browser", created),
+                ("browser.type", "allow", "*", "Allow text entry in the isolated browser", created),
                 ("workspace.read", "allow", "*", "Read the coworker's own workspace", created),
                 ("workspace.write", "allow", "*", "Write the coworker's own workspace", created),
                 ("shell.run", "deny", "*", "Shell disabled until explicitly granted", created),
             ])
+        if not db.execute("SELECT 1 FROM users").fetchone():
+            db.execute(
+                "INSERT INTO users(email,name,role,created_at) VALUES(?,?,?,?)",
+                ("admin@fastbot.local", "Local Administrator", "admin", now()),
+            )
+        if not db.execute("SELECT 1 FROM components").fetchone():
+            db.execute(
+                "INSERT INTO components(name,title,schema_json,template,published,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                ("checklist", "Checklist", '{"title":"string","items":"array"}',
+                 "checklist", 1, now(), now()),
+            )
+        for action, note in (("browser.click", "Allow page interaction in the isolated browser"),
+                             ("browser.type", "Allow text entry in the isolated browser")):
+            if not db.execute("SELECT 1 FROM policies WHERE action=?", (action,)).fetchone():
+                db.execute("INSERT INTO policies(action,effect,pattern,note,created_at) VALUES(?,?,?,?,?)",
+                           (action, "allow", "*", note, now()))
+    ensure_column("agents", "auth_credential_id", "INTEGER")
+    ensure_column("agents", "owner_id", "INTEGER")
+    ensure_column("agents", "deleted_at", "TEXT")
+    ensure_column("skills", "owner_id", "INTEGER")
+    ensure_column("skills", "scope", "TEXT NOT NULL DEFAULT 'personal'")
+    ensure_column("channels", "owner_id", "INTEGER")
+    with connect() as connection:
+        connection.execute("UPDATE agents SET visibility='public' WHERE owner_id IS NULL AND slug IN ('general','knowledge','risk')")
+
+
+def ensure_column(table: str, column: str, declaration: str) -> None:
+    """Small SQLite migration helper for repositories upgraded in place."""
+    with connect() as connection:
+        existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def rows(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:

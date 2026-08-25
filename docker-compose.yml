@@ -3,7 +3,32 @@ services:
     build: .
     ports: ["5012:5012"]
     env_file: [.env]
-    volumes: ["fastbot-data:/app/.data"]
     restart: unless-stopped
+    volumes:
+      - fastbot-data:/app/.data
+    environment:
+      FASTBOT_SUPERVISOR_URL: http://supervisor:4500
+      FASTBOT_SUPERVISOR_TOKEN: ${FASTBOT_SUPERVISOR_TOKEN}
+    depends_on: [supervisor]
+    networks: [default, computers]
+  supervisor:
+    build:
+      context: .
+      dockerfile: Dockerfile.supervisor
+    environment:
+      SUPERVISOR_TOKEN: ${FASTBOT_SUPERVISOR_TOKEN}
+      COMPUTER_TOKEN: ${FASTBOT_SESSION_SECRET}
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    networks: [default, computers]
+  computer-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.computer
+    image: fastbot-computer:local
+    profiles: ["build-only"]
 volumes:
   fastbot-data:
+networks:
+  computers:
+    name: fastbot-computers
+    internal: true

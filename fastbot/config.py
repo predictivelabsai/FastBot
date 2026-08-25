@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     fastbot_session_secret: str = "dev-only-secret"
     fastbot_computer_backend: str = "docker"
     fastbot_workspace_root: Path = Path(".data/workspaces")
+    fastbot_supervisor_url: str = ""
+    fastbot_supervisor_token: str = ""
     model_provider: str = "xai"
     model_name: str = "grok-4-1-fast-reasoning"
     xai_api_key: str = ""
