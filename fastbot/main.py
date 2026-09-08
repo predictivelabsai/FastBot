@@ -13,6 +13,10 @@ from starlette.responses import JSONResponse, RedirectResponse, Response, Stream
 from starlette.staticfiles import StaticFiles
 
 from . import auth, credentials, db, ui
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from web.landing import landing_page
 from .agent import stream_turn
 from .computers import (
     human_action,
@@ -50,7 +54,8 @@ app.user_middleware = app.user_middleware[1:] + app.user_middleware[:1]
 
 @rt("/")
 def get(request: Request):
-    return ui.home_page(auth.actor(request))
+    actor = auth.actor(request)
+    return ui.home_page(actor) if actor else landing_page()
 
 
 @rt("/agents")
